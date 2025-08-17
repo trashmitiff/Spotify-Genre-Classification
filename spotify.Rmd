@@ -1,0 +1,304 @@
+---
+title: "spotify"
+author: "Tiffany"
+date: "2024-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, 
+                      include = TRUE,
+                      fig.align = "center",  out.width = "65%")
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(ggcorrplot)
+library(ggridges)
+library(wordcloud)
+library(tm)
+```
+
+## R Markdown
+
+```{r}
+spotify = read.csv("../data/spotify-2023.csv", header=TRUE)
+head(spotify)
+```
+
+## Including Plots
+
+```{r}
+summary(spotify)
+```
+```{r}
+
+rename_function <- function(x) {
+  gsub("_\\.", "", x)
+}
+
+spotify = spotify %>% 
+  mutate(streams = as.integer(streams), key = as.factor(key))%>%
+   mutate(across(
+    .cols = contains("in_") & where(is.character), 
+    .fns = as.integer
+  ))%>%
+  rename_with(rename_function)
+  
+```
+
+```{r}
+song_query = spotify %>%
+  filter(mode == "Major", key %in% c( "D#","E"))%>%
+  select(track_name,artist.s._name,energy,key,mode)%>%
+  arrange(energy)
+
+print(song_query)
+```
+
+
+
+```{r}
+
+top_ten = spotify %>%
+  filter(!is.na(streams))%>%
+  slice_max(order_by = streams, n = 10)
+
+avg_streams = spotify %>%
+          summarise(avg_streams = mean(streams, na.rm=T))%>%
+          pull(avg_streams)
+
+options(scipen = 999)
+
+ggplot(data = top_ten) +
+  geom_col(aes(x = fct_reorder(track_name, streams, .desc = TRUE), 
+               y = streams, 
+               fill=streams)) +
+  labs(x="", 
+       y="No. of streams",
+       title = "Top ten most streamed tracks",
+       subtitle = "Based on statistics provided by spotify") +
+  scale_fill_gradient(low = "skyblue", high = "cornflowerblue")+
+  
+  geom_text(aes(x = track_name, 
+                y = streams , 
+                label = sprintf("%.1f mil", streams/1e6)),
+            size = 3,
+            position = position_dodge(0.8), vjust = -1)+
+  geom_hline(yintercept = avg_streams,
+            linetype = "dashed",
+            color = "darkslategrey")+
+  
+  ggplot2::annotate("label", 
+           x = Inf, 
+           y = avg_streams, 
+           label = paste("Average number of streams:",sprintf("%.1f mil", avg_streams/1e6)),
+           hjust = 1,
+           vjust = -0.5,
+           color = "white",
+           fill = "darkslategrey",
+           size = 3.5,
+           family = "Courier") +
+  
+  theme_minimal()+
+  
+  theme(
+    text = element_text(family = "Courier"),
+    axis.text.x = element_text(angle = 20, hjust = 0.5, vjust = 0.9),
+    axis.text.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(size = 10, color = "cadetblue", hjust = 0.5))+
+  coord_cartesian(clip = "off")
+  
+```
+
+
+```{r}
+corrmat.data = spotify %>% 
+  select(18:24, streams, contains("in_"), bpm)
+
+head(corrmat.data)
+```
+```{r}
+corr_matrix = round(cor(corrmat.data),2)
+corrp.mat = cor_pmat(corrmat.data)
+ggcorrplot(corr_matrix, method = 'square')
+```
+
+
+```{r}
+data.cluster = corrmat.data %>% select(!contains("in_") & !contains("str"))
+corr_matrix = round(cor(corrmat.data %>% select(!contains("in_") & !contains("str"))),2)
+ggcorrplot(corr_matrix, method = 'square')
+```
+```{r}
+ggplot(data = spotify) +
+  geom_histogram(aes(x=streams, fill= ..count..), binwidth=50000000, color="black")+
+  labs(x="No. of Streams", y="No. of Songs", title="Distribution of streaming numbers", subtitle = "Across popular songs in 2023")+
+  scale_fill_gradient(low="lightyellow",high="darkred")+
+  theme(
+    legend.position = "none",
+    text = element_text(family = "Courier"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(size = 10, color = "cadetblue", hjust = 0.5))
+```
+```{r}
+
+ggplot(spotify %>% filter(key != "", mode == "Major"), aes(x = energy, y = key, fill = key)) +
+  geom_density_ridges() +
+  labs(x = "Energy", y = "Key (Major)")+
+  theme_minimal()+
+  theme(legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank()
+        )+
+  geom_vline(data = spotify %>% summarise(median_energy = median(energy, na.rm = T)), 
+             aes(xintercept = median_energy), linetype="dashed")
+
+```
+
+```{r}
+ggplot(spotify %>% filter(key != "", mode == "Minor"), aes(x = energy, y = key, fill = key)) +
+  geom_density_ridges() +
+  labs(x = "Energy", y = "Key (Minor)")+
+  theme_minimal()+
+  theme(legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank()
+        )+
+  geom_vline(data = spotify %>% summarise(median_energy = median(energy, na.rm = T)), 
+             aes(xintercept = median_energy), linetype="dashed")
+```
+```{r}
+wordcloud(spotify%>%
+            select(track_name)%>%
+            filter(!is.na(track_name))%>%
+            mutate(track_name = iconv(track_name, to = "UTF-8")) %>%
+            mutate(track_name = tolower(gsub("[^\x01-\x7F]", "", track_name)))%>%
+            mutate(track_name = removeWords(track_name, stopwords("en")))%>%
+            pull(track_name), 
+          min.freq = 5, max.words = 100, random.order = FALSE,
+          scale = c(9, 0.5),
+          colors = brewer.pal(8, "Set1"))
+```
+
+```{r}
+corr_matrix 
+```
+```{r}
+scaled.data.cluster = data.cluster %>% 
+    mutate_all(~(scale(.) %>% as.vector))
+scaled.data.cluster
+```
+
+
+```{r}
+library(NbClust)
+library(factoextra)
+
+fviz_nbclust(scaled.data.cluster, kmeans, method = "wss") +
+  labs(subtitle = "Elbow method")
+```
+
+```{r}
+fviz_nbclust(scaled.data.cluster, kmeans, method = "silhouette") +
+    labs(subtitle = "Silhouette method")
+```
+```{r}
+library(parameters)
+
+n_clust <- n_clusters(scaled.data.cluster,
+  package = c("easystats", "NbClust", "mclust"),
+  standardize = FALSE
+)
+n_clust
+```
+
+
+```{r}
+
+wss <- numeric(10)
+set.seed(121)
+
+
+for(i in 1:10) {
+  km.out = kmeans(scaled.data.cluster, centers = i, nstart = 20)
+  wss[i] = km.out$tot.withinss
+}
+
+wss_df = tibble(clusters = 1:10, wss=wss)
+wss_df
+scree_plot = ggplot(wss_df, aes(x = clusters, y= wss))+
+  geom_point(size = 4) +
+  geom_line() +
+  labs(x = 'No. of clusters', y='Within Sum of Squares', title = 'Scree plot')+
+  scale_x_continuous(breaks = seq(1,10,1))+
+  geom_hline(
+    yintercept = wss,
+    linetype = "dashed"
+  )
+
+scree_plot
+```
+
+
+
+```{r}
+help(kmeans)
+spotify.cluster = kmeans(scaled.data.cluster, 4, nstart = 20)
+spotify.cluster
+```
+
+
+
+```{r}
+
+library(cluster)
+clusplot(scaled.data.cluster, spotify.cluster$cluster, color = TRUE, shade = TRUE, labels =0, lines = 0)
+```
+```{r}
+cluster.mean = as.data.frame(spotify.cluster$centers)
+```
+```{r}
+scaled.data.cluster$cluster = spotify.cluster$cluster
+
+fviz_cluster(object = spotify.cluster,
+             data = scaled.data.cluster, labelsize = 1)
+```
+
+```{r}
+library(ggradar)
+
+final_scaled <- cluster.mean %>%
+  mutate_all(~ scales::rescale(., to = c(0, 1)))%>%
+  mutate(cluster = factor(1:4))%>%
+  relocate(cluster, .before =everything())
+
+print(final_scaled)
+
+ggradar(
+  plot.data= final_scaled,
+  background.circle.colour = "white",
+  axis.label.size = 4,  # Axis labels
+  grid.label.size = 4,  # Grid labels
+  label.gridline.min = TRUE,  # Show gridline labels
+  label.gridline.mid = TRUE,
+  label.gridline.max = TRUE,
+  group.point.size = 2,
+  gridline.min.colour = "gray60",
+  gridline.mid.colour = "gray60",
+  gridline.max.colour = "gray60",
+  legend.position = "none"
+) + 
+  coord_fixed(clip = "off")
+```
+
+
+
